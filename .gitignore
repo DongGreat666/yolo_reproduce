@@ -1,10 +1,12 @@
 
-data/
-checkpoints/
-logs/
+data/VOCdevkit
+
 __pycache__/
 *.pt
 *.pth
 
+.idea/
+
+README.pdf
 
 
