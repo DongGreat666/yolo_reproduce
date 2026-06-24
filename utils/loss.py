@@ -47,28 +47,42 @@ class YoloLoss(nn.Module):
         pred_box2 = pred_boxes[..., 1, :]
         target_box = target[..., self.C + 1:self.C + 5]
 
+        # 拿到当前预测张量在什么设备上（CPU 还是 GPU），确保接下来生成的辅助矩阵也在同一设备上
         device = pred.device
+        # 使用 meshgrid 生成网格坐标索引矩阵
+        # grid_y 的内容是：第 0 行全都是 0，第 1 行全都是 1 ... 第 6 行全都是 6（代表行号 i）
+        # grid_x 的内容是：第 0 列全都是 0，第 1 列全都是 1 ... 第 6 列全都是 6（代表列号 j）
         grid_y, grid_x = torch.meshgrid(
             torch.arange(self.S, device=device),
             torch.arange(self.S, device=device),
             indexing="ij",
         )
+        # 将这两个行号、列号矩阵变形为 [1, S, S] 的形状，方便后续和四维张量进行矩阵相加（广播机制）
         grid_x = grid_x.view(1, self.S, self.S)
         grid_y = grid_y.view(1, self.S, self.S)
 
         def cell_to_image(box, pred_wh_is_sqrt=False):
+            # 【矩阵版中心点还原】：
+            # box[..., 0] 拿到了全图所有格子框的相对中心点 x （在一个网格里的位置）
+            # 直接加上变好形的 grid_x（列号矩阵）得到全图位置，然后除以 S，得到全图相对位置。
+            # 一行代码，全图 49 个格子的 x 立马全部完成还原！
             x = (box[..., 0] + grid_x) / self.S
             y = (box[..., 1] + grid_y) / self.S
+            # 判断是预测值还是实际值
             if pred_wh_is_sqrt:
+                # 如果是预测值（pred_box），网络容易吐出狂妄的数字，先用 .clamp 强行卡在 -2.0 到 2.0 之间抗爆
                 sqrt_w = box[..., 2].clamp(min=-2.0, max=2.0)
                 sqrt_h = box[..., 3].clamp(min=-2.0, max=2.0)
                 w = sqrt_w.pow(2)
                 h = sqrt_h.pow(2)
             else:
+                # 如果是真值（target），本来就是标准的全图比例，不需要开根号还原，直接读取即可
                 w = box[..., 2]
                 h = box[..., 3]
+            # 把计算好的全图 x, y, w, h 在最后一个维度堆叠起来，重新组合成一个完整的全图坐标张量
             return torch.stack([x, y, w, h], dim=-1)
 
+        # 对框1、框2以及真实的框全部转换成基于整张图的 [x, y, w, h] 统一标准度量衡
         pred_box1_img = cell_to_image(pred_box1[..., :4], pred_wh_is_sqrt=True)
         pred_box2_img = cell_to_image(pred_box2[..., :4], pred_wh_is_sqrt=True)
         target_box_img = cell_to_image(target_box)

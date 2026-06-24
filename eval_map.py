@@ -51,8 +51,10 @@ def main():
         iou_threshold=config.MAP_IOU_THRESHOLD,
         conf_threshold=config.MAP_CONF_THRESHOLD,
         nms_threshold=config.MAP_NMS_THRESHOLD,
+        ignore_difficult=config.MAP_IGNORE_DIFFICULT,
     )
 
+    print("Ignore difficult:", config.MAP_IGNORE_DIFFICULT)
     print(f"mAP@{config.MAP_IOU_THRESHOLD:.2f}: {mean_ap:.4f}")
     for class_id, ap in sorted(ap_by_class.items()):
         print(f"{VOC_CLASSES[class_id]:>12s}: {ap:.4f}")

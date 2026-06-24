@@ -19,36 +19,12 @@ csv_file = config.TRAIN_LOG_PATH
 
 
 def get_datasets():
-    train_07 = VOCDataset(
-        root_dir=config.DATA_DIR,
-        year="2007",
-        image_set="trainval",
-        train=True,
-        S=config.S,
-        B=config.B,
-        C=config.NUM_CLASSES,
-        img_size=config.IMG_SIZE,
-    )
-    train_12 = VOCDataset(
-        root_dir=config.DATA_DIR,
-        year="2012",
-        image_set="trainval",
-        train=True,
-        S=config.S,
-        B=config.B,
-        C=config.NUM_CLASSES,
-        img_size=config.IMG_SIZE,
-    )
-    val_07 = VOCDataset(
-        root_dir=config.DATA_DIR,
-        year="2007",
-        image_set="test",
-        train=False,
-        S=config.S,
-        B=config.B,
-        C=config.NUM_CLASSES,
-        img_size=config.IMG_SIZE,
-    )
+    train_07 = VOCDataset(root_dir=config.DATA_DIR, year="2007", image_set="trainval", train=True,
+        S=config.S, B=config.B, C=config.NUM_CLASSES, img_size=config.IMG_SIZE)
+    train_12 = VOCDataset(root_dir=config.DATA_DIR, year="2012", image_set="trainval", train=True,
+        S=config.S, B=config.B, C=config.NUM_CLASSES, img_size=config.IMG_SIZE)
+    val_07 = VOCDataset(root_dir=config.DATA_DIR, year="2007", image_set="test", train=False,
+        S=config.S, B=config.B, C=config.NUM_CLASSES, img_size=config.IMG_SIZE)
     return ConcatDataset([train_07, train_12]), val_07
 
 
@@ -308,6 +284,7 @@ def main():
                 iou_threshold=config.MAP_IOU_THRESHOLD,
                 conf_threshold=config.MAP_CONF_THRESHOLD,
                 nms_threshold=config.MAP_NMS_THRESHOLD,
+                ignore_difficult=config.MAP_IGNORE_DIFFICULT,
             )
             print(f"mAP@{config.MAP_IOU_THRESHOLD:.2f}: {map50:.4f}")
 
@@ -323,7 +300,13 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model_state_dict(model), config.BEST_MODEL_PATH)
+            torch.save(
+                {
+                    "epoch": epoch + 1,
+                    "model_state_dict": model_state_dict(model),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "best_val_loss": best_val_loss,
+                }, config.BEST_MODEL_PATH)
 
         torch.save(
             {

@@ -9,92 +9,8 @@ import config
 from model.factory import build_yolo_model
 from utils.dataset import VOCDataset, VOC_CLASSES
 from utils.checkpoint import load_model_state
-
-
-def iou_xyxy(box1, box2):
-    x1 = max(box1[0], box2[0])
-    y1 = max(box1[1], box2[1])
-    x2 = min(box1[2], box2[2])
-    y2 = min(box1[3], box2[3])
-
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    area1 = max(0, box1[2] - box1[0]) * max(0, box1[3] - box1[1])
-    area2 = max(0, box2[2] - box2[0]) * max(0, box2[3] - box2[1])
-    return inter / (area1 + area2 - inter + 1e-6)
-
-
-def nms(boxes, iou_threshold=0.5):
-    if not boxes:
-        return []
-
-    boxes = sorted(boxes, key=lambda x: x[1], reverse=True)
-    keep = []
-
-    while boxes:
-        best = boxes.pop(0)
-        keep.append(best)
-        rest = []
-        for box in boxes:
-            if box[0] != best[0] or iou_xyxy(best[2:], box[2:]) < iou_threshold:
-                rest.append(box)
-        boxes = rest
-
-    return keep
-
-
-def decode_prediction(pred, conf_threshold=0.05):
-    """
-    pred: [S, S, C + B * 5]
-    return: [class_id, score, x1, y1, x2, y2], normalized to image size.
-    """
-    boxes = []
-    S = config.S
-    B = config.B
-    C = config.NUM_CLASSES
-
-    pred = pred.detach().cpu()
-    class_scores = pred[..., :C]
-    pred_boxes = pred[..., C:C + B * 5].reshape(S, S, B, 5)
-
-    for i in range(S):
-        for j in range(S):
-            for b in range(B):
-                x_cell, y_cell, sqrt_w, sqrt_h, conf = pred_boxes[i, j, b]
-                x = (x_cell.item() + j) / S
-                y = (y_cell.item() + i) / S
-                w = sqrt_w.clamp(min=-2.0, max=2.0).item() ** 2
-                h = sqrt_h.clamp(min=-2.0, max=2.0).item() ** 2
-                conf = conf.item()
-
-                for class_id in range(C):
-                    score = conf * class_scores[i, j, class_id].item()
-                    if score < conf_threshold:
-                        continue
-
-                    x1 = max(0, min(1, x - w / 2))
-                    y1 = max(0, min(1, y - h / 2))
-                    x2 = max(0, min(1, x + w / 2))
-                    y2 = max(0, min(1, y + h / 2))
-                    boxes.append([class_id, score, x1, y1, x2, y2])
-
-    return nms(boxes, iou_threshold=0.5)
-
-
-def draw_boxes(image, boxes, save_path):
-    draw = ImageDraw.Draw(image)
-    w_img, h_img = image.size
-
-    for class_id, score, x1, y1, x2, y2 in boxes:
-        x1 = int(x1 * w_img)
-        y1 = int(y1 * h_img)
-        x2 = int(x2 * w_img)
-        y2 = int(y2 * h_img)
-        label = f"{VOC_CLASSES[class_id]} {score:.2f}"
-
-        draw.rectangle([x1, y1, x2, y2], width=3, outline='black')
-        draw.text((x1, max(0, y1 - 12)), label, fill='black')
-
-    image.save(save_path)
+from utils.decode import decode_prediction
+from utils.visualize import draw_boxes
 
 
 def load_model(device):
@@ -104,6 +20,8 @@ def load_model(device):
     if not os.path.exists(ckpt_path):
         ckpt_path = config.LAST_MODEL_PATH
 
+    # map_location=device 确保不管这个模型之前是在谁的服务器、哪张显卡上训出来的，
+    # 都能安全地被拉回你当前的 device（比如你的笔记本 CPU），防止显卡不匹配报错。
     checkpoint = torch.load(ckpt_path, map_location=device)
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         load_model_state(model, checkpoint["model_state_dict"])
@@ -122,23 +40,17 @@ def main():
     print("Using Device:", device)
 
     model = load_model(device)
-    dataset = VOCDataset(
-        root_dir=config.DATA_DIR,
-        year="2007",
-        image_set="test",
-        S=config.S,
-        B=config.B,
-        C=config.NUM_CLASSES,
-        img_size=config.IMG_SIZE,
-        train=False,
-    )
+    dataset = VOCDataset(root_dir=config.DATA_DIR, year="2007", image_set="test",
+                         S=config.S, B=config.B, C=config.NUM_CLASSES, img_size=config.IMG_SIZE, train=False)
 
+    #  随机生成几个数，对应处理的图片编号
     indices = random.sample(range(len(dataset)), k=5)
     for idx, data_idx in enumerate(indices):
         image_id = dataset.ids[data_idx]
         image_path = os.path.join(dataset.image_dir, image_id + ".jpg")
         image = Image.open(image_path).convert("RGB")
         input_img = TF.resize(image, (config.IMG_SIZE, config.IMG_SIZE))
+        # TF进行维度大翻转和归一化，unsqueeze(0)：强行升维，伪造“批次（Batch）”
         input_tensor = TF.to_tensor(input_img).unsqueeze(0).to(device)
         if config.NORMALIZE_IMAGES:
             input_tensor = TF.normalize(
@@ -150,8 +62,10 @@ def main():
         with torch.no_grad():
             pred = model(input_tensor)[0]
 
-        boxes = decode_prediction(pred, conf_threshold=0.25)
+        # 对模型输出进行解码，即恢复位置、类预测、置信度
+        boxes = decode_prediction(pred, conf_threshold=0.3)
         save_path = os.path.join(config.OUTPUTS_DIR, f"pred_{idx}_{image_id}.jpg")
+        # 画框
         draw_boxes(image.copy(), boxes, save_path)
         print(f"{image_id}: {len(boxes)} boxes -> {save_path}")
 

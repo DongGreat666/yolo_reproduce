@@ -9,7 +9,7 @@ PROJECT_NAME = "YoLo"
 # Choose one: "yolov1" or "resnet_yolo".
 MODEL_NAME = "resnet_yolo"
 # Choose one: "fc_head" or "cnn_head".
-DETECTION_HEAD = "fc_head"
+DETECTION_HEAD = "cnn_head"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,6 +57,9 @@ MAP_EVAL_INTERVAL = 5
 MAP_IOU_THRESHOLD = 0.5
 MAP_NMS_THRESHOLD = 0.5
 MAP_CONF_THRESHOLD = 0.0
+# VOC official evaluation excludes difficult objects from the positive count and
+# ignores detections matched to them.
+MAP_IGNORE_DIFFICULT = True
 
 
 # =========================== yolov1 ===========================
